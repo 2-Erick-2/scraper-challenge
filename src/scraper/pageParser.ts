@@ -221,6 +221,7 @@ export class PageParser {
     totalPages: number;
     hasNextPage: boolean;
     nextPageControlId?: string;
+    totalRecords?: number;
   } {
     const $ = cheerio.load(html);
 
@@ -254,11 +255,25 @@ export class PageParser {
     const hasNextPage = nextBtn.length > 0 && !nextBtn.hasClass('rich-datascr-button-dsb');
     const nextPageControlId = nextBtn.attr('id');
 
+    // Buscar conteo total de registros o procesos reportados por el portal
+    let totalRecords: number | undefined;
+    const fullText = $.text() || '';
+    const countMatch =
+      fullText.match(/foram encontrados\s+(\d+)\s+processos/i) ||
+      fullText.match(/(?:foram encontrados|total de|registros encontrados|itens encontrados)\s*[:\s]\s*(\d+)/i) ||
+      fullText.match(/(\d+)\s+(?:processos?|registros?|itens?)\s+encontrados?/i);
+
+    if (countMatch && countMatch[1]) {
+      const parsed = parseInt(countMatch[1], 10);
+      if (!isNaN(parsed)) totalRecords = parsed;
+    }
+
     return {
       currentPage,
       totalPages: maxPage,
       hasNextPage: hasNextPage || maxPage > currentPage,
-      nextPageControlId
+      nextPageControlId,
+      totalRecords
     };
   }
 

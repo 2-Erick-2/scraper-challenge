@@ -83,5 +83,17 @@ describe('PageParser', () => {
       expect(pagination.hasNextPage).toBe(true);
       expect(pagination.nextPageControlId).toBe('fdtProcesso:scroller_next');
     });
+
+    it('debe extraer el total de registros o procesos reportados', () => {
+      const html = `
+        <div class="footer">Foram encontrados 142 processos nesta pesquisa.</div>
+        <table class="rich-datascr">
+          <tr><td class="rich-datascr-act">1</td></tr>
+        </table>
+      `;
+
+      const pagination = PageParser.parsePaginationInfo(html);
+      expect(pagination.totalRecords).toBe(142);
+    });
   });
 });

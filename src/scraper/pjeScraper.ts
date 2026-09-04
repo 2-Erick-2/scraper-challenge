@@ -134,7 +134,8 @@ export class PjeScraper {
 
         // Analizar si hay siguiente página
         const pagination = PageParser.parsePaginationInfo(html);
-        console.log(`\n📊 Info Paginación: Página ${pagination.currentPage} de ${pagination.totalPages || 'desconocido'} (Siguiente: ${pagination.hasNextPage})`);
+        const totalRecordsMsg = pagination.totalRecords ? ` | Registros totales reportados: ${pagination.totalRecords}` : '';
+        console.log(`\n📊 Info Paginación: Página ${pagination.currentPage} de ${pagination.totalPages || 'desconocido'}${totalRecordsMsg} (Siguiente: ${pagination.hasNextPage})`);
 
         if (!pagination.hasNextPage || pageNum >= this.config.maxPages) {
           console.log(`🏁 Límite alcanzado o no hay más páginas.`);
