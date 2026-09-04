@@ -1,0 +1,22 @@
+# Dependencias
+node_modules/
+
+# Build
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Salidas de scraping y descargas (no subir PDFs ni datos a git)
+output/downloads/*
+!output/downloads/.gitkeep
+output/*.json
+output/*.csv
+
+# Variables de entorno
+.env
+
+# SO
+.DS_Store
+Thumbs.db

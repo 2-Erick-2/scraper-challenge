@@ -1,0 +1,41 @@
+{
+  "name": "pje-scraper-challenge",
+  "version": "1.0.0",
+  "description": "Senior-grade TypeScript web scraper for PJe (JBoss Seam / JSF) with rate-limiting, exponential backoff, streaming PDF downloads, and dead-letter queue.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "ts-node src/index.ts",
+    "start:mock": "ts-node src/index.ts --mock",
+    "mock:server": "ts-node src/mock/server.ts",
+    "retry-failed": "ts-node src/index.ts --retry-failed",
+    "test": "jest"
+  },
+  "keywords": [
+    "scraper",
+    "typescript",
+    "pje",
+    "jsf",
+    "jboss-seam",
+    "rate-limiting",
+    "exponential-backoff"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.7",
+    "axios-cookiejar-support": "^5.0.4",
+    "cheerio": "^1.0.0",
+    "https-proxy-agent": "^9.1.0",
+    "tough-cookie": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^22.5.4",
+    "@types/tough-cookie": "^4.0.5",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}
