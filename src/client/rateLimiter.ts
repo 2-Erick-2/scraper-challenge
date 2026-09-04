@@ -1,8 +1,4 @@
-/**
- * Implementación de Rate Limiting y Backoff Exponencial con Jitter
- * para manejo robusto de respuestas HTTP 429 (Too Many Requests).
- */
-
+// Manejo de rate limiting (429) con backoff exponencial y jitter
 export class RateLimiter {
   private baseDelayMs: number;
   private maxDelayMs: number;
@@ -14,27 +10,21 @@ export class RateLimiter {
     this.maxRetries = maxRetries;
   }
 
-  /**
-   * Pausa la ejecución durante el tiempo especificado en milisegundos.
-   */
   public async sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /**
-   * Extrae el tiempo de espera del encabezado HTTP 'Retry-After'.
-   * Soporta tanto segundos enteros como fechas HTTP (RFC 1123).
-   */
+  // Parsea el header Retry-After si viene en segundos o fecha RFC 1123
   public parseRetryAfterHeader(retryAfterHeader?: string): number | null {
     if (!retryAfterHeader) return null;
 
-    // Caso 1: Entero en segundos
+    // Caso 1: Segundos
     const seconds = parseInt(retryAfterHeader, 10);
     if (!isNaN(seconds) && seconds >= 0) {
       return seconds * 1000;
     }
 
-    // Caso 2: Fecha HTTP estándar (ej. "Wed, 21 Oct 2026 07:28:00 GMT")
+    // Caso 2: Fecha HTTP standard
     const dateMs = Date.parse(retryAfterHeader);
     if (!isNaN(dateMs)) {
       const diffMs = dateMs - Date.now();
@@ -44,31 +34,25 @@ export class RateLimiter {
     return null;
   }
 
-  /**
-   * Calcula el tiempo de backoff exponencial con Full Jitter.
-   * La aleatoriedad (jitter) previene la sincronización y sobrecarga repetida (thundering herd).
-   */
+  // Calcula tiempo de espera con backoff exponencial + full jitter
   public calculateBackoff(attempt: number, retryAfterHeader?: string): number {
     const explicitWait = this.parseRetryAfterHeader(retryAfterHeader);
     if (explicitWait !== null) {
-      // Si el servidor especificó Retry-After, lo respetamos añadiendo un pequeño margen aleatorio (100-300ms)
+      // Si el server mando Retry-After le damos prioridad mas un margen chico
       return explicitWait + Math.floor(Math.random() * 200) + 100;
     }
 
-    // Exponential Backoff: base * 2^attempt
     const exponential = Math.min(
       this.maxDelayMs,
       this.baseDelayMs * Math.pow(2, attempt)
     );
 
-    // Full Jitter: variabilidad entre 50% y 100% del tiempo calculado
+    // Full jitter (50% a 100%) para no pegarle al server al mismo tiempo
     const jitterFactor = 0.5 + Math.random() * 0.5;
     return Math.floor(exponential * jitterFactor);
   }
 
-  /**
-   * Ejecuta una operación asíncrona con reintentos automáticos ante errores 429 o temporales.
-   */
+  // Ejecuta una promesa con reintentos si da 429 o error transitorio de red
   public async executeWithRetry<T>(
     operationName: string,
     fn: () => Promise<T>,
@@ -103,7 +87,7 @@ export class RateLimiter {
           onRetry(attempt, delayMs, error);
         } else {
           console.warn(
-            `⚠️  [RateLimiter] ${operationName} falló con HTTP ${statusCode || error.code}. Reintento ${attempt}/${this.maxRetries} en ${delayMs}ms...`
+            `[rate-limit] ${operationName} dio HTTP ${statusCode || error.code}. Reintentando en ${delayMs}ms (intento ${attempt}/${this.maxRetries})...`
           );
         }
 

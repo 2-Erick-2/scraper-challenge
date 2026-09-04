@@ -1,18 +1,7 @@
 import http from 'http';
 import url from 'url';
 
-/**
- * Servidor Mock local que simula fielmente la arquitectura de JBoss Seam / JSF
- * del portal PJe (TRF5) para pruebas de concepto y validación técnica.
- *
- * Características simuladas:
- * 1. Manejo de estado con JSESSIONID y javax.faces.ViewState.
- * 2. Tabla de procesos con nomenclatura oficial CNJ.
- * 3. Paginación mediante POST y componente RichFaces.
- * 4. Streaming de PDFs válidos.
- * 5. Inyección programada de errores HTTP 429 con encabezado Retry-After
- *    para demostrar el Exponential Backoff con Jitter y la Dead Letter Queue.
- */
+// Servidor mock local para probar JSF, paginacion y 429 sin depender de la red externa
 
 const PORT = Number(process.env.MOCK_PORT) || 3000;
 const rateLimitCounters: Record<string, number> = {};
@@ -81,7 +70,7 @@ export function startMockServer(port = PORT): Promise<http.Server> {
 
         // Documento 101: Simula 429 transitorio (falla las primeras 2 veces, triunfa en la 3ra)
         if (docId === '101' && attempt <= 2) {
-          console.log(`[MockServer] Inyectando HTTP 429 simulado para doc ${docId} (Intento ${attempt})`);
+          console.log(`[mock] Simulando 429 para doc ${docId} (intento ${attempt})`);
           res.writeHead(429, {
             'Content-Type': 'text/plain',
             'Retry-After': '1'
@@ -237,7 +226,7 @@ export function startMockServer(port = PORT): Promise<http.Server> {
     });
 
     server.listen(port, () => {
-      console.log(`📡 [MockServer] Servidor PJe de simulación escuchando en http://localhost:${port}`);
+      console.log(`[mock] Servidor de pruebas escuchando en http://localhost:${port}`);
       resolve(server);
     });
   });

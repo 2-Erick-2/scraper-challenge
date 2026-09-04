@@ -2,11 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { FailedDownloadItem } from '../types';
 
-/**
- * Dead Letter Queue (DLQ) para registrar de forma persistente
- * los documentos o PDFs cuya descarga falló tras agotar los reintentos.
- * Permite reanudar o reintentar exclusivamente los fallidos posteriormente.
- */
+// Guarda en un JSON los documentos que fallaron tras agotar reintentos
 export class DeadLetterQueue {
   private filePath: string;
   private queue: Map<string, FailedDownloadItem> = new Map();

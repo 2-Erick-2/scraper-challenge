@@ -6,10 +6,7 @@ import { DataStore } from '../storage/dataStore';
 import { DeadLetterQueue } from '../storage/deadLetterQueue';
 import { ScraperConfig, ProcessoItem } from '../types';
 
-/**
- * Orquestador principal del scraper de PJe.
- * Gestiona el ciclo de vida JSF, la paginación, la extracción y las descargas.
- */
+// Controlador principal del scraper de PJe
 export class PjeScraper {
   private config: ScraperConfig;
   private httpClient: HttpClient;
@@ -35,37 +32,33 @@ export class PjeScraper {
     );
   }
 
-  /**
-   * Ejecuta el flujo completo de scraping.
-   */
+  // Corre el flujo principal: sesion inicial -> busqueda -> paginas -> descarga docs
   public async run(): Promise<void> {
-    console.log('====================================================');
-    console.log('🚀 Iniciando PJe Scraper (Senior-Grade)');
-    console.log(`🌐 Target: ${this.config.targetUrl}`);
-    console.log(`📁 Directorio de salida: ${this.config.outputDir}`);
-    console.log(`⏱️  Retries: ${this.config.maxRetries} (Exponential Backoff + Jitter)`);
-    console.log('====================================================\n');
+    console.log('--- Iniciando PJe Scraper ---');
+    console.log(`Target: ${this.config.targetUrl}`);
+    console.log(`Salida: ${this.config.outputDir}`);
+    console.log(`Reintentos max: ${this.config.maxRetries} (backoff + jitter)\n`);
 
     let currentUrl = this.config.targetUrl;
     let pageNum = 1;
     let viewState: string | null = null;
 
     try {
-      // Paso 1: Petición inicial GET para establecer sesión (JSESSIONID) y obtener ViewState
-      console.log(`📡 [Paso 1] Estableciendo sesión con GET ${currentUrl}...`);
+      // 1. Peticion inicial para cookies de sesion y viewState
+      console.log(`[session] Conectando a ${currentUrl}...`);
       const initialResponse = await this.httpClient.get(currentUrl);
       let html = initialResponse.data;
 
       viewState = PageParser.extractViewState(html);
-      console.log(`🔑 ViewState inicial obtenido: ${viewState ? viewState.slice(0, 30) + '...' : 'No detectado (stateless o mock)'}`);
+      console.log(`[session] ViewState: ${viewState ? viewState.slice(0, 25) + '...' : 'no detectado'}`);
 
-      // Si la página inicial requiere disparar el formulario de búsqueda inicial:
+      // Revisamos si ya traia tabla de procesos o si hay que disparar busqueda
       let processos = PageParser.parseProcessList(html, currentUrl);
 
       if (processos.length === 0 && viewState) {
-        console.log(`🔍 Tabla inicial vacía. Enviando submit de búsqueda en PJe (filtro: "${this.config.searchQuery || 'Jose Silva'}")...`);
+        console.log(`[search] Mandando busqueda por nombre ("${this.config.searchQuery || 'Jose Silva'}")...`);
 
-        // Formulario fPP (estándar de PJe TRF5) y fallback para mock
+        // Formulario fPP (TRF5)
         const searchPayload = new URLSearchParams({
           'AJAXREQUEST': '_viewRoot',
           'fPP': 'fPP',
@@ -83,68 +76,66 @@ export class PjeScraper {
           const updatedViewState = PageParser.extractViewState(html);
           if (updatedViewState) viewState = updatedViewState;
           processos = PageParser.parseProcessList(html, currentUrl);
-          console.log(`✅ Procesos encontrados tras búsqueda: ${processos.length}`);
+          console.log(`[search] Procesos encontrados: ${processos.length}`);
         } catch (err: any) {
-          console.warn(`⚠️  Búsqueda con formulario falló: ${err.message}. Continuando con HTML actual.`);
+          console.warn(`[search warn] Fallo el post de busqueda: ${err.message}. Probando con html inicial.`);
         }
       }
 
-      // Paso 2: Ciclo de navegación por páginas
+      // 2. Loop de paginacion
       while (pageNum <= this.config.maxPages) {
-        console.log(`\n📄 === Procesando Página ${pageNum} ===`);
+        console.log(`\n=== Pagina ${pageNum} ===`);
         processos = PageParser.parseProcessList(html, currentUrl);
-        console.log(`📋 Procesos detectados en página ${pageNum}: ${processos.length}`);
+        console.log(`[page ${pageNum}] ${processos.length} procesos detectados`);
 
         if (processos.length === 0) {
-          console.log('ℹ️  No se encontraron más registros. Finalizando recorrido de páginas.');
+          console.log('[page] No se encontraron mas registros. Terminando.');
           break;
         }
 
-        // Guardar metadatos en el almacén de datos
+        // Guardamos metadatos en data.json
         this.dataStore.addOrUpdateMany(processos);
 
-        // Paso 3: Descarga de documentos asociados a cada proceso de la página
+        // 3. Descarga de documentos por proceso
         for (const proc of processos) {
-          console.log(`\n📂 Proceso: ${proc.numeroProcesso} | Documentos: ${proc.documentos.length}`);
+          console.log(`\n[proceso] ${proc.numeroProcesso} (${proc.documentos.length} docs)`);
 
-          // Si el proceso tiene una URL de detalle pero no trajo documentos en la tabla principal
+          // Si vino sin documentos en la tabla pero tiene link de detalle/popup
           if (proc.documentos.length === 0 && proc.detalheUrl) {
             try {
-              console.log(`🔎 Consultando detalle de expediente: ${proc.detalheUrl}`);
+              console.log(`[detalle] Abriendo popup: ${proc.detalheUrl}`);
               const detailResp = await this.httpClient.get(proc.detalheUrl);
               proc.documentos = PageParser.parseDocumentDetails(detailResp.data, proc.detalheUrl, proc.numeroProcesso);
               this.dataStore.addOrUpdateMany([proc]);
             } catch (err: any) {
-              console.warn(`⚠️  No se pudo abrir detalle de ${proc.numeroProcesso}: ${err.message}`);
+              console.warn(`[detalle warn] No se pudo abrir ${proc.numeroProcesso}: ${err.message}`);
             }
           }
 
-          // Descargar cada PDF en streaming
+          // Descarga streaming de cada documento
           for (const doc of proc.documentos) {
             await this.pdfDownloader.downloadDocument(proc.numeroProcesso, doc);
-            // Pequeño delay de cortesía entre descargas de documentos
             if (this.config.requestDelayMs > 0) {
               await this.rateLimiter.sleep(this.config.requestDelayMs);
             }
           }
         }
 
-        // Actualizar almacén con el estado final de documentos
         this.dataStore.addOrUpdateMany(processos);
 
-        // Analizar si hay siguiente página
+        // Revisamos si hay pagina siguiente en el datascroller
         const pagination = PageParser.parsePaginationInfo(html);
-        const totalRecordsMsg = pagination.totalRecords ? ` | Registros totales reportados: ${pagination.totalRecords}` : '';
-        console.log(`\n📊 Info Paginación: Página ${pagination.currentPage} de ${pagination.totalPages || 'desconocido'}${totalRecordsMsg} (Siguiente: ${pagination.hasNextPage})`);
+        const totalRecordsMsg = pagination.totalRecords ? ` | total reportado: ${pagination.totalRecords}` : '';
+        console.log(`\n[paginacion] Pagina ${pagination.currentPage} de ${pagination.totalPages || '?'}${totalRecordsMsg} (siguiente: ${pagination.hasNextPage})`);
 
         if (!pagination.hasNextPage || pageNum >= this.config.maxPages) {
-          console.log(`🏁 Límite alcanzado o no hay más páginas.`);
+          console.log('[paginacion] Fin de paginas o limite alcanzado.');
           break;
         }
 
-        // Avanzar a la siguiente página mediante POST con ViewState
+        // Avanzamos enviando el post con el viewstate actual
         pageNum++;
-        console.log(`➡️  Avanzando a página ${pageNum}...`);
+        console.log(`[paginacion] Avanzando a pagina ${pageNum}...`);
 
         if (viewState) {
           const nextPagePayload = new URLSearchParams({
@@ -160,7 +151,7 @@ export class PjeScraper {
           const newViewState = PageParser.extractViewState(html);
           if (newViewState) viewState = newViewState;
         } else {
-          // Si el endpoint admite GET para paginar
+          // fallback get con param page si aplica
           const urlWithPage = new URL(currentUrl);
           urlWithPage.searchParams.set('page', String(pageNum));
           const pageResp = await this.httpClient.get(urlWithPage.toString());
@@ -170,40 +161,36 @@ export class PjeScraper {
         await this.rateLimiter.sleep(this.config.requestDelayMs);
       }
 
-      console.log('\n====================================================');
-      console.log('🎉 Scraping completado con éxito.');
-      console.log(`📄 Total procesos registrados: ${this.dataStore.getAll().length}`);
-      console.log(`⚠️  Documentos en Dead Letter Queue (pendientes): ${this.dlq.size()}`);
-      console.log(`💾 Datos guardados en: ${this.config.dataFilePath}`);
-      console.log(`📂 PDFs guardados en: ${this.config.downloadDir}`);
-      console.log('====================================================');
+      console.log('\n----------------------------------------------------');
+      console.log('Scraping completado.');
+      console.log(`Procesos en data.json: ${this.dataStore.getAll().length}`);
+      console.log(`Pendientes en DLQ: ${this.dlq.size()}`);
+      console.log(`Datos: ${this.config.dataFilePath}`);
+      console.log(`Descargas: ${this.config.downloadDir}`);
+      console.log('----------------------------------------------------');
     } catch (error: any) {
-      console.error('\n💥 Error crítico durante el scraping:', error.message);
+      console.error('\nError en ejecucion:', error.message);
       if (error.response) {
-        console.error(`Status HTTP: ${error.response.status}`);
+        console.error(`HTTP Status: ${error.response.status}`);
       }
       throw error;
     }
   }
 
-  /**
-   * Reintenta exclusivamente los documentos que quedaron en la Dead Letter Queue.
-   */
+  // Reintenta solo los que fallaron y quedaron en failed_downloads.json
   public async retryFailedDownloads(): Promise<void> {
-    console.log('====================================================');
-    console.log('🔄 Procesando Dead Letter Queue (Reintentos)');
-    console.log(`⚠️  Documentos pendientes: ${this.dlq.size()}`);
-    console.log('====================================================\n');
+    console.log('--- Reintentando descargas fallidas (DLQ) ---');
+    console.log(`Pendientes: ${this.dlq.size()}\n`);
 
     const failedItems = this.dlq.getAll();
     if (failedItems.length === 0) {
-      console.log('✅ No hay descargas pendientes en la Dead Letter Queue.');
+      console.log('No hay items pendientes en DLQ.');
       return;
     }
 
     let recovered = 0;
     for (const item of failedItems) {
-      console.log(`🔄 Reintentando: ${item.numeroProcesso} - ${item.titulo}`);
+      console.log(`[reintento] ${item.numeroProcesso} - ${item.titulo}`);
       const result = await this.pdfDownloader.downloadDocument(item.numeroProcesso, {
         idDocumento: item.idDocumento,
         titulo: item.titulo,
@@ -218,7 +205,7 @@ export class PjeScraper {
       await this.rateLimiter.sleep(this.config.requestDelayMs);
     }
 
-    console.log(`\n🏁 Reintentos concluidos. Recuperados: ${recovered}/${failedItems.length}`);
-    console.log(`⚠️  Restantes en DLQ: ${this.dlq.size()}`);
+    console.log(`\nReintentos listos. Recuperados: ${recovered}/${failedItems.length}`);
+    console.log(`Restantes en DLQ: ${this.dlq.size()}`);
   }
 }

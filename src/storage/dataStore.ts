@@ -2,9 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { ProcessoItem } from '../types';
 
-/**
- * Almacenamiento estructurado de procesos y metadatos extraídos.
- */
+// Guarda los procesos y metadatos extraidos en data.json
 export class DataStore {
   private filePath: string;
   private processosMap: Map<string, ProcessoItem> = new Map();

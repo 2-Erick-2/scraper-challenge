@@ -3,10 +3,7 @@ import { PjeScraper } from './scraper/pjeScraper';
 import { startMockServer } from './mock/server';
 import { ScraperConfig } from './types';
 
-/**
- * Punto de entrada CLI del Scraper.
- * Soporta ejecución estándar, modo simulación (--mock) y reintento de fallidos (--retry-failed).
- */
+// CLI para correr el scraper (normal, --mock o --retry-failed)
 async function main() {
   const args = process.argv.slice(2);
   const isMock = args.includes('--mock');
@@ -36,7 +33,7 @@ async function main() {
 
   try {
     if (isMock) {
-      console.log('🧪 Iniciando en MODO SIMULACIÓN (Mock Server)...');
+      console.log('Iniciando con servidor mock local...');
       const port = 3000;
       mockServer = await startMockServer(port);
       config.targetUrl = `http://localhost:${port}/pjeconsulta/ConsultaPublica/listView.seam`;
@@ -50,12 +47,12 @@ async function main() {
       await scraper.run();
     }
   } catch (error: any) {
-    console.error('💥 Ejecución finalizada con error:', error.message);
+    console.error('Fallo la ejecucion:', error.message);
     process.exitCode = 1;
   } finally {
     if (mockServer) {
       mockServer.close();
-      console.log('🛑 Servidor mock detenido.');
+      console.log('Servidor mock detenido.');
     }
   }
 }

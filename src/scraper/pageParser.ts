@@ -1,32 +1,26 @@
 import * as cheerio from 'cheerio';
 import { ProcessoItem, DocumentoItem } from '../types';
 
-/**
- * Parser basado en Cheerio para extraer información estructurada
- * de vistas JSF/JBoss Seam de sistemas judiciales PJe.
- */
+// Helpers para parsear vistas de JSF / RichFaces con cheerio
 export class PageParser {
-  /**
-   * Extrae el token de estado de JSF (javax.faces.ViewState).
-   * Esencial para poder enviar peticiones POST válidas (búsqueda y paginación).
-   */
+  // Extrae el token javax.faces.ViewState (necesario para hacer POSTs en JSF)
   public static extractViewState(html: string): string | null {
     if (!html) return null;
 
-    // Caso 1: Input oculto en formulario HTML estándar
+    // Caso 1: Input hidden standard del form
     const $ = cheerio.load(html);
     const viewStateInput = $('input[name="javax.faces.ViewState"]').val();
     if (viewStateInput && typeof viewStateInput === 'string') {
       return viewStateInput;
     }
 
-    // Caso 2: Respuesta parcial AJAX de JSF (<update id="javax.faces.ViewState">...)
+    // Caso 2: Respuesta AJAX de RichFaces (<update id="javax.faces.ViewState">...)
     const ajaxMatch = html.match(/<update\s+id=["']javax\.faces\.ViewState["'][^>]*><!\[CDATA\[(.*?)\]\]><\/update>/i);
     if (ajaxMatch && ajaxMatch[1]) {
       return ajaxMatch[1];
     }
 
-    // Caso 3: Búsqueda mediante regex directo como fallback
+    // Caso 3: Fallback con regex
     const regexMatch = html.match(/name=["']javax\.faces\.ViewState["']\s+value=["']([^"']+)["']/i);
     if (regexMatch && regexMatch[1]) {
       return regexMatch[1];
@@ -35,9 +29,7 @@ export class PageParser {
     return null;
   }
 
-  /**
-   * Extrae la lista de procesos y documentos asociados desde la tabla de resultados.
-   */
+  // Parsea la tabla de procesos y los links de cada fila
   public static parseProcessList(html: string, baseUrl: string): ProcessoItem[] {
     const $ = cheerio.load(html);
     const processos: ProcessoItem[] = [];
@@ -144,9 +136,7 @@ export class PageParser {
     return processos;
   }
 
-  /**
-   * Extrae la lista detallada de documentos dentro de la vista de un proceso.
-   */
+  // Extrae los documentos cuando se entra a la vista de detalle de un proceso
   public static parseDocumentDetails(html: string, baseUrl: string, numeroProcesso: string): DocumentoItem[] {
     const $ = cheerio.load(html);
     const documentos: DocumentoItem[] = [];
@@ -213,9 +203,7 @@ export class PageParser {
     return documentos;
   }
 
-  /**
-   * Analiza los controles de paginación de RichFaces/JSF (ej. rich-datascr).
-   */
+  // Revisa el componente rich-datascr para saber pag actual, total y si hay boton siguiente
   public static parsePaginationInfo(html: string): {
     currentPage: number;
     totalPages: number;

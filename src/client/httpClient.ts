@@ -4,10 +4,7 @@ import { CookieJar } from 'tough-cookie';
 import { RateLimiter } from './rateLimiter';
 import { Readable } from 'stream';
 
-/**
- * Cliente HTTP con estado de sesión (CookieJar persistente) y headers
- * realistas para interactuar con aplicaciones JavaServer Faces / JBoss Seam.
- */
+// Cliente HTTP con cookie jar para mantener la sesion de JSF viva entre requests
 export class HttpClient {
   private client: AxiosInstance;
   public cookieJar: CookieJar;
@@ -17,7 +14,7 @@ export class HttpClient {
     this.cookieJar = new CookieJar();
     this.rateLimiter = rateLimiter || new RateLimiter();
 
-    // Axios configurado con soporte nativo para Cookie Jar
+    // Axios con cookie jar automatico y headers de navegador comun
     this.client = wrapper(
       axios.create({
         jar: this.cookieJar,
@@ -44,18 +41,14 @@ export class HttpClient {
     );
   }
 
-  /**
-   * Petición GET con rate limiting y manejo de reintentos
-   */
+  // GET con reintento automatico si tira 429
   public async get<T = string>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> {
     return this.rateLimiter.executeWithRetry(`GET ${url}`, async () => {
       return await this.client.get<T>(url, config);
     });
   }
 
-  /**
-   * Petición POST (necesaria para formularios y paginación en JSF)
-   */
+  // POST urlencoded (para submits y paginacion de JSF)
   public async post<T = string>(
     url: string,
     data?: any,
@@ -72,9 +65,7 @@ export class HttpClient {
     });
   }
 
-  /**
-   * Petición de descarga en modo Stream para evitar saturar la memoria RAM con PDFs grandes
-   */
+  // Descarga en stream para no cargar archivos pesados en memoria
   public async getStream(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<Readable>> {
     return this.rateLimiter.executeWithRetry(`Stream GET ${url}`, async () => {
       return await this.client.get<Readable>(url, {

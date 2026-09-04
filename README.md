@@ -1,46 +1,44 @@
-# PJe TypeScript Scraper (Senior-Grade)
+# PJe Scraper (TypeScript)
 
-Scraper de alto rendimiento y resiliencia desarrollado en **TypeScript** para la extracción de procesos judiciales y descarga automatizada de documentos en plataformas **PJe (Processo Judicial Eletrônico)** basadas en **JBoss Seam / JavaServer Faces (JSF)**, como el portal del **TRF5** (`pjett.trf5.jus.br`).
+Scraper desarrollado en TypeScript para consultar procesos judiciales y descargar documentos desde portales **PJe (Processo Judicial Eletrônico)** basados en **JBoss Seam / JSF**, como el del tribunal **TRF5** (`pjett.trf5.jus.br`).
 
-Este proyecto fue diseñado cumpliendo estrictamente con la restricción de **no utilizar automatización de navegadores** (sin Puppeteer, Playwright ni Selenium), resolviendo la navegación mediante ingeniería inversa del protocolo HTTP, gestión de estado de sesión (`JSESSIONID`) y tokens de ciclo de vida JSF (`javax.faces.ViewState`).
-
----
-
-## 🏗️ Decisiones de Arquitectura y Diseño Senior
-
-### 1. Gestión de Estado en Servidor (JSF / JBoss Seam)
-Las aplicaciones basadas en `.seam` no son APIs REST sin estado; mantienen un árbol de componentes en la memoria del servidor (*server-side stateful component tree*).
-* **`JSESSIONID`**: Se mantiene una sesión HTTP persistente a lo largo de todas las peticiones mediante un `CookieJar` (`tough-cookie` + `axios-cookiejar-support`).
-* **`javax.faces.ViewState`**: Cada acción (búsqueda inicial, navegación, cambio de página mediante el componente `rich:datascroller`) extrae dinámicamente el token `ViewState` de la respuesta previa (sea HTML completo o respuesta parcial AJAX) y lo inyecta en el payload POST.
-
-### 2. Manejo de Errores 429 (Too Many Requests) & Resiliencia
-Para mitigar bloqueos por WAF o limitadores de tasa sin saturar el servidor:
-* **Exponential Backoff con Full Jitter**:
-  $$\text{Delay} = \min(\text{maxDelay}, \text{baseDelay} \times 2^{\text{attempt}}) \times \text{random}(0.5, 1.0)$$
-  La aleatoriedad previene la sincronización simultánea de reintentos (*Thundering Herd problem*).
-* **Respeto a `Retry-After`**: Si el servidor expone este encabezado (sea en segundos o fecha estándar RFC 1123), el scraper lo prioriza antes del cálculo heurístico.
-* **Dead Letter Queue (DLQ)**: Si un documento o PDF agota los reintentos permitidos, el proceso **no se interrumpe**. El documento fallido se persiste en `output/failed_downloads.json` con metadatos completos para auditoría y reintento posterior.
-
-### 3. Descarga Eficiente de PDFs (Streaming Directo a Disco)
-* Se evita almacenar buffers en memoria RAM (`response.data`), lo que causaría caídas por *Out-Of-Memory* (OOM) en extracciones masivas.
-* Se utiliza **Node.js Streams** (`responseType: 'stream'` junto a `stream/promises.pipeline`) canalizando los bytes directamente al sistema de archivos.
-* **Nombres descriptivos y sanitizados**:
-  Formato: `{NUMERO_PROCESSO}_doc_{ID_DOCUMENTO}_{TITULO_SANITIZADO}.pdf`.
-
-### 4. Conectividad y Evasión de WAF (Recomendación de VPN)
-Los servidores del Poder Judicial Brasileño (`*.jus.br`) cuentan con filtros perimetrales y WAF que rechazan o aplican *rate limiting* severo a direcciones IP fuera de Brasil.
-* **Uso de VPN (Recomendado para entorno real):** Se recomienda utilizar **Urban VPN** o **Proton VPN** con servidor ubicado en **Brasil**. Esto permite que las peticiones alcancen el portal judicial sin que el firewall descarte los paquetes TCP antes del handshake TLS.
-* **Modo Simulación (Mock Server):** Para pruebas y demostración de código sin depender de una conexión VPN activa o cuando el portal oficial experimenta mantenimiento, se incluye un servidor mock local nativo.
-
-### 5. Pruebas Unitarias Automatizadas
-Se implementaron pruebas con **Jest** y **ts-jest** para garantizar la robustez de los parsers y algoritmos clave:
-* Extracción precisa de `javax.faces.ViewState` en HTML y XML parcial.
-* Parseo de expedientes con formato CNJ.
-* Cálculo de Exponential Backoff con Jitter y parsing de encabezados `Retry-After`.
+El proyecto se hizo sin herramientas de automatización de navegador (sin Puppeteer, Playwright ni Selenium). Todo el flujo se resuelve mediante peticiones HTTP directas con Axios, persistencia de cookies de sesión (`JSESSIONID`) y manejo del ciclo de vida de JSF (`javax.faces.ViewState`).
 
 ---
 
-## 📂 Estructura del Repositorio
+## Arquitectura y Decisiones Técnicas
+
+### 1. Estado de Sesión en el Servidor (JSF / Seam)
+Las aplicaciones que usan `.seam` no son APIs REST sin estado; el servidor guarda el estado de los componentes en memoria:
+* **Cookies de sesión**: Usamos `tough-cookie` con `axios-cookiejar-support` para que Axios retenga `JSESSIONID` y `ROUTER_ID` en todas las peticiones sucesivas. Sin esto, el servidor devuelve `ViewExpiredException` y redirige a la página principal.
+* **`javax.faces.ViewState`**: Para la búsqueda inicial y para pasar de página por POST, extraemos el token `ViewState` de la respuesta previa (sea desde el HTML del formulario o desde las respuestas parciales XML de RichFaces).
+
+### 2. Manejo de Errores 429 (Too Many Requests)
+Para no saturar el servidor y tolerar bloqueos temporales:
+* **Backoff Exponencial con Jitter**: El tiempo de espera crece exponencialmente (`baseDelay * 2^attempt`) acotado por un máximo, y se le aplica un factor aleatorio (jitter) para evitar que múltiples reintentos se sincronicen y saturen el servidor al mismo tiempo.
+* **Soporte para `Retry-After`**: Si el servidor responde con el header `Retry-After` (en segundos o fecha RFC 1123), se respeta ese tiempo antes del cálculo por defecto.
+* **Dead Letter Queue (DLQ)**: Si una descarga falla tras agotar los reintentos, el script no se detiene. El fallo se guarda en `output/failed_downloads.json` y el scraper sigue con el siguiente proceso.
+
+### 3. Descarga de PDFs con Streaming
+* Los PDFs se descargan usando streams directos a disco (`pipeline` de Node.js con `fs.createWriteStream`). Esto evita cargar los archivos en la memoria RAM y mantiene el consumo por debajo de 35 MB.
+* **Sanitización de nombres**: Se guardan como `{NUMERO_PROCESSO}_doc_{ID_DOCUMENTO}_{TITULO}.pdf`.
+* Si un endpoint devuelve `Content-Type: text/html` (como pasa con vistas previas de autos o documentos HTML de PJe), se guarda con extensión `.html` para que el archivo no quede corrupto.
+
+### 4. Conectividad y VPN (Entorno Real)
+Los servidores del poder judicial de Brasil (`*.jus.br`) tienen un firewall perimetral que descarta paquetes TCP que provengan de IPs fuera de Brasil.
+* **En entorno real:** Es necesario tener activa una VPN conectada a Brasil (ej. Proton VPN o Urban VPN) a nivel de sistema operativo para que el tráfico de Node.js pueda comunicarse con el portal.
+* **En entorno de prueba:** Se incluye un servidor mock local (`npm run start:mock`) que replica las vistas JSF, la paginación y la inyección de errores 429 para probar todo sin depender de la conexión externa.
+
+### 5. Pruebas Unitarias
+Se agregaron pruebas unitarias con Jest (`npm test`) para verificar:
+* Extracción de `ViewState` en HTML regular y respuestas parciales XML.
+* Parseo de números de proceso con formato CNJ.
+* Cálculo del backoff con jitter y parsing de cabeceras `Retry-After`.
+* Detección de paginación y conteo total de registros.
+
+---
+
+## Estructura del Proyecto
 
 ```text
 scraper-challenge/
@@ -73,14 +71,14 @@ scraper-challenge/
 
 ---
 
-## 🚀 Requisitos Previos
+## Requisitos Previos
 
-* **Node.js**: v18+ o v20+ recomendado.
-* **npm**: v9+.
+* **Node.js**: v18+ o v20+
+* **npm**: v9+
 
 ---
 
-## ⚙️ Instalación
+## Instalacion
 
 1. Clonar el repositorio y acceder a la carpeta:
    ```bash
@@ -94,66 +92,65 @@ scraper-challenge/
 
 ---
 
-## 🧪 Modos de Ejecución
+## Modos de Ejecucion
 
-### Opción A: Prueba Completa con Servidor Mock (Recomendado para validación inmediata)
-Levanta un servidor local en el puerto 3000 que simula el entorno PJe del TRF5, realiza paginación POST con ViewState, simula errores 429 transitorios (con recuperación exitosa) y errores permanentes (registrados en DLQ):
+### Opcion A: Prueba con Servidor Mock (Recomendado para probar sin VPN)
+Levanta un servidor local en el puerto 3000 que simula el entorno PJe del TRF5, realiza paginacion POST con ViewState, simula errores 429 transitorios (con recuperacion) y permanentes (enviados a DLQ):
 ```bash
 npm run start:mock
 ```
 
-### Opción B: Ejecución contra el Sitio Oficial (TRF5)
-Ejecuta el scraper contra la URL configurada por defecto (`https://pjett.trf5.jus.br/pjeconsulta/ConsultaPublica/listView.seam`):
+### Opcion B: Ejecucion contra el Sitio Oficial (TRF5)
+Ejecuta el scraper contra la URL real configurada (`https://pjett.trf5.jus.br/pjeconsulta/ConsultaPublica/listView.seam`). Requiere VPN a Brasil:
 ```bash
 npm run start
 ```
 
-### Opción C: Ejecución contra una URL personalizada (Cualquier tribunal PJe)
-Puedes apuntar a cualquier instancia activa de PJe pasando el argumento `--url`:
+### Opcion C: Ejecucion con URL o paginas personalizadas
+Puedes apuntar a cualquier instancia de PJe pasando `--url`:
 ```bash
 npm run start -- --url "https://pje.tse.jus.br/pje/ConsultaPublica/listView.seam"
 ```
 
-O limitando el número máximo de páginas a consultar:
+O limitando la cantidad de paginas:
 ```bash
 npm run start -- --max-pages 5
 ```
 
-### Opción D: Reintentar únicamente descargas fallidas (Dead Letter Queue)
-Si la ejecución previa registró documentos con error 429 o de red en `output/failed_downloads.json`, puedes procesar únicamente los pendientes sin volver a scrapear todo el portal:
+### Opcion D: Reintentar descargas fallidas (Dead Letter Queue)
+Procesa solo los documentos que quedaron pendientes en `output/failed_downloads.json`:
 ```bash
 npm run retry-failed
 ```
 
-### Opción E: Ejecutar Pruebas Unitarias Automatizadas
-Ejecuta la suite de pruebas con Jest para verificar parsers, ViewState y RateLimiter:
+### Opcion E: Pruebas unitarias
+Ejecuta la suite de Jest:
 ```bash
 npm test
 ```
 
 ---
 
-## 🔧 Configuración por Variables de Entorno (`.env`)
+## Variables de Entorno (`.env`)
 
-Copia `.env.example` a `.env` si deseas personalizar la configuración por defecto:
+Copia `.env.example` a `.env` para personalizar la configuracion si lo necesitas:
 ```bash
 cp .env.example .env
 ```
 
-Parámetros disponibles:
-| Variable | Descripción | Valor por defecto |
+| Variable | Descripcion | Default |
 | :--- | :--- | :--- |
 | `TARGET_URL` | URL del endpoint `listView.seam` | `https://pjett.trf5.jus.br/pjeconsulta/ConsultaPublica/listView.seam` |
-| `MAX_RETRIES` | Número máximo de reintentos ante error 429 | `4` |
-| `BASE_DELAY_MS` | Tiempo base para el cálculo de backoff | `1000` |
-| `MAX_DELAY_MS` | Techo máximo de espera en backoff | `15000` |
-| `REQUEST_DELAY_MS`| Pausa de cortesía entre peticiones para evitar sobrecarga | `800` |
+| `MAX_RETRIES` | Numero maximo de reintentos para 429 | `4` |
+| `BASE_DELAY_MS` | Delay base para el calculo de backoff | `1000` |
+| `MAX_DELAY_MS` | Techo maximo de espera en backoff | `15000` |
+| `REQUEST_DELAY_MS`| Pausa entre descargas | `800` |
 | `OUTPUT_DIR` | Directorio de salida de datos | `./output` |
 | `DOWNLOAD_DIR` | Directorio de descarga de PDFs | `./output/downloads` |
 
 ---
 
-## 📊 Formato de Datos Extraídos (`output/data.json`)
+## Formato de Datos (`output/data.json`)
 
 Los datos extraídos se guardan con el siguiente esquema estructurado:
 
@@ -180,7 +177,7 @@ Los datos extraídos se guardan con el siguiente esquema estructurado:
 
 ---
 
-## 🛡️ Dead Letter Queue (`output/failed_downloads.json`)
+## Dead Letter Queue (`output/failed_downloads.json`)
 
 Si un archivo no pudo ser recuperado tras agotar la cuota de reintentos, se almacena con el detalle del incidente:
 
